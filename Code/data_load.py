@@ -20,7 +20,14 @@ def data_loader(ID, dB, onoff, index):
     for i in conc_trial_info[index,:]:
         trial_info.append(chr(i))
     trial_info = "".join(trial_info)
+    Mpos = trial_info.find('Male')
+    Fpos = trial_info.find('Female')
+    if Mpos < Fpos:
+        label = 0
+    else:
+        label = 1
     #Load unmixing matrix and fix it for Python
     temp_unmixing = data['ic_clean']['icaunmixingmatrix']
     unmixing_matrix = np.concatenate(np.concatenate(temp_unmixing))
-    return times, trial_data, trial_info, unmixing_matrix
+    
+    return times, trial_data, label, unmixing_matrix
