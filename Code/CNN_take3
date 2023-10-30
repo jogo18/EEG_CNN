@@ -36,6 +36,28 @@ class TestDataSet(Dataset):
     def __len__(self):
         return 20
 
+class ValidationDataSet(Dataset):
+    def __init__(self):
+        self.files = glob.glob(r"C:\Users\Jakob\Desktop\AAU\7Semester\Projekt\P7_projekt\DATA\ON_3\*.mat")
+        
+    def __getitem__(self, idx):
+        self.data_path = os.path.join(self.files[idx])
+        self.dataset = sio.loadmat(self.data_path)
+        self.label = self.dataset['ic_clean']['trialinfo'][0][0][idx]
+        temp = []
+        for i in self.label[18:]:
+            temp.append(chr(i))
+        temp = "".join(temp)
+        if temp.find('Male') < temp.find('Female'):
+            self.label = torch.zeros(1)
+        else:
+            self.label = torch.ones(1)
+        self.dataset = self.dataset['ic_clean']['trial'][0][0][0][idx]
+        self.dataset = self.dataset[:-2, :]
+        return self.dataset, self.label
+    
+    def __len__(self):
+        return 20
 
 class CNN(nn.Module):
     def __init__(self):
@@ -76,39 +98,32 @@ class CNN(nn.Module):
         return x
 runnacc = 0
 training_data = TestDataSet()
+validation_data = TestDataSet()
 train_dataloader = DataLoader(training_data, batch_size=1, shuffle=True)
+test_dataloader = DataLoader(validation_data, batch_size = 1, shuffle = False)
+
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
 model = CNN().to(device)
 loss_fn = nn.BCELoss()
 optimizer = torch.optim.Adam(model.parameters(), lr= 0.001)
 epochs = 5
 for e in range(0, epochs):
-
     model.train()
-    total_loss = 0
-    # initialize the total training and validation loss
-    totalTrainLoss = 0
-    totalValLoss = 0
-	# initialize the number of correct predictions in the training
-	# and validation step
-    trainCorrect = 0
-    valCorrect = 0
-    
-    for (x, y) in train_dataloader:
-        x = x.float().to(device)
-        print(x)
-        y = torch.squeeze(y, 1).to(device)
-        output = model(x)
-        loss = loss_fn(output, y)
+    for x, y in train_dataloader:
+        y_pred = model(x)
+        loss = loss_fn(y_pred, y)
         optimizer.zero_grad()
         loss.backward()
         optimizer.step()
+acc = 0
+count = 0
+for x, y in test_dataloader:
+    x = x.float().to(device)
+    y = torch.squeeze(y, 1).to(device)
+    y_pred = model(x)
+    acc += (torch.argmax(y_pred, 1) == y).float().sum()
+    count += len(y)
+acc /= count
+print("Epoch %d: model accuracy %.2f%%" % (e, acc*100))
 
-        total_loss += loss
-        acc = (output.round() == y).float().mean()
-        runnacc += acc
-        # trainCorrect += (output.argmax(1) == y)
-        # print(acc)
 
-
-print(runnacc)
