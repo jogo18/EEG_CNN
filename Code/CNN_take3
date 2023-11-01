@@ -11,11 +11,12 @@ import glob
 import scipy.io as sio
 import os
 import torch.nn.functional as F
+import tqdm
 
 
 class TestDataSet(Dataset):
     def __init__(self):
-        self.files = glob.glob(r"C:\Users\Jakob\Desktop\AAU\7Semester\Projekt\P7_projekt\DATA\ON_3\*.mat")
+        self.files = glob.glob(r'C:\Users\jakob\Documents\AAU\7_semester\Projekt\DATA\ON_3\*.mat')
         
     def __getitem__(self, idx):
         self.data_path = os.path.join(self.files[idx])
@@ -30,34 +31,34 @@ class TestDataSet(Dataset):
         else:
             self.label = torch.ones(1)
         self.dataset = self.dataset['ic_clean']['trial'][0][0][0][idx]
-        self.dataset = self.dataset[:-2, :]
+        self.dataset = self.dataset[:-2, 4096:]
         return self.dataset, self.label
     
     def __len__(self):
         return 20
 
-class ValidationDataSet(Dataset):
-    def __init__(self):
-        self.files = glob.glob(r"C:\Users\Jakob\Desktop\AAU\7Semester\Projekt\P7_projekt\DATA\ON_3\*.mat")
+# class ValidationDataSet(Dataset):
+#     def __init__(self):
+#         self.files = glob.glob(r"C:\Users\jakob\Documents\AAU\7_semester\ProjektP7_projekt\DATA\ON_3\*.mat")
         
-    def __getitem__(self, idx):
-        self.data_path = os.path.join(self.files[idx])
-        self.dataset = sio.loadmat(self.data_path)
-        self.label = self.dataset['ic_clean']['trialinfo'][0][0][idx]
-        temp = []
-        for i in self.label[18:]:
-            temp.append(chr(i))
-        temp = "".join(temp)
-        if temp.find('Male') < temp.find('Female'):
-            self.label = torch.zeros(1)
-        else:
-            self.label = torch.ones(1)
-        self.dataset = self.dataset['ic_clean']['trial'][0][0][0][idx]
-        self.dataset = self.dataset[:-2, :]
-        return self.dataset, self.label
+#     def __getitem__(self, idx):
+#         self.data_path = os.path.join(self.files[idx])
+#         self.dataset = sio.loadmat(self.data_path)
+#         self.label = self.dataset['ic_clean']['trialinfo'][0][0][idx]
+#         temp = []
+#         for i in self.label[18:]:
+#             temp.append(chr(i))
+#         temp = "".join(temp)
+#         if temp.find('Male') < temp.find('Female'):
+#             self.label = torch.zeros(1)
+#         else:
+#             self.label = torch.ones(1)
+#         self.dataset = self.dataset['ic_clean']['trial'][0][0][0][idx]
+#         self.dataset = self.dataset[:-2, :]
+#         return self.dataset, self.label
     
-    def __len__(self):
-        return 20
+#     def __len__(self):
+#         return 20
 
 class CNN(nn.Module):
     def __init__(self):
@@ -96,34 +97,85 @@ class CNN(nn.Module):
         x = self.fc3(x)
         x = F.sigmoid(x)
         return x
-runnacc = 0
-training_data = TestDataSet()
-validation_data = TestDataSet()
-train_dataloader = DataLoader(training_data, batch_size=1, shuffle=True)
-test_dataloader = DataLoader(validation_data, batch_size = 1, shuffle = False)
+# conv1 = nn.Sequential(
+# nn.Conv1d(64, 64, 5, 2),
+# nn.MaxPool1d(2, 2)
+# )
+# conv2 = nn.Sequential(
+#     nn.Conv1d(128, 128, 5, 2),
+#     nn.MaxPool1d(2,2)
+# )
+# conv3 = nn.Sequential(
+#     nn.Conv1d(128, 256, 5, 2),
+#     nn.MaxPool1d(2,2)
+# )
+# fc1 = nn.Sequential(
+#     nn.Linear(20928 , 5232),
+#     nn.ReLU()
+# )
+# fc2 = nn.Sequential(
+#     nn.Linear(5232, 1308),
+#     nn.ReLU()
+# )
+# fc3 = nn.Sequential(
+#     nn.Linear(1308, 1),
+#     nn.ReLU()
+# )
 
+
+# runnacc = 0
+training_data = TestDataSet()
+# validation_data = TestDataSet()
+train_dataloader = DataLoader(training_data, batch_size=1, shuffle=False)
+# test_dataloader = DataLoader(validation_data, batch_size = 1, shuffle = False)
+
+# testasd = next(iter(train_dataloader))
+# print(testasd[0][0][:,0])
+# test1 = conv1(testasd[0].float())
+
+# print(test1[0][:,0])
+# test2 = torch.flatten(test1)
+# # print(test2.shape)
+# test2 = conv2(test1)
+# test3 = conv3(test2)
+# test4 = torch.flatten(test3)
+# print(test4.shape)
+# test4 = torch.flatten(test3)
+# print(test4.shape)
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
 model = CNN().to(device)
 loss_fn = nn.BCELoss()
 optimizer = torch.optim.Adam(model.parameters(), lr= 0.001)
 epochs = 5
+acc = 0 
 for e in range(0, epochs):
     model.train()
-    for x, y in train_dataloader:
-        y_pred = model(x)
-        loss = loss_fn(y_pred, y)
-        optimizer.zero_grad()
-        loss.backward()
-        optimizer.step()
-acc = 0
-count = 0
-for x, y in test_dataloader:
-    x = x.float().to(device)
-    y = torch.squeeze(y, 1).to(device)
-    y_pred = model(x)
-    acc += (torch.argmax(y_pred, 1) == y).float().sum()
-    count += len(y)
-acc /= count
-print("Epoch %d: model accuracy %.2f%%" % (e, acc*100))
+    with tqdm.tqdm(train_dataloader, unit = 'batch') as tepoch:
+        for x, y in tepoch:
+            tepoch.set_description(f"Epoch {e}")
+            x = x.float().to(device)
+            y = torch.squeeze(y, 1).to(device)
+            y_pred = model(x)
+            y_pred = model(x)
+            loss = loss_fn(y_pred, y)
+            optimizer.zero_grad()
+            loss.backward()
+            optimizer.step()
+            acc += (y_pred.round() == y).float().sum()
+            tepoch.set_postfix(loss=loss.item(), accuracy=100. * acc)
+
+
+
+torch.save(model.state_dict(), r"C:\Users\Jakob\Desktop\AAU\7Semester\Projekt\P7_projekt\ModelDict")
+# acc = 0
+# count = 0
+# for x, y in test_dataloader:
+#     x = x.float().to(device)
+#     y = torch.squeeze(y, 1).to(device)
+#     y_pred = model(x)
+#     acc += (torch.argmax(y_pred, 1) == y).float().sum()
+#     count += len(y)
+# acc /= count
+# print("Epoch %d: model accuracy %.2f%%" % (e, acc*100))
 
 
