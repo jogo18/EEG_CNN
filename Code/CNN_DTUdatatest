@@ -1,0 +1,226 @@
+import torch
+import torch.nn as nn
+from torch.utils.data import DataLoader, Dataset
+from torchvision.transforms import ToTensor
+from torchsummary import summary
+import pickle
+import pandas as pd
+import numpy as np
+import glob
+import scipy.io as sio
+import os
+import torch.nn.functional as F
+import matplotlib.pyplot as plt
+import tqdm
+import csv
+
+
+# CNN Model
+class EEGNet(nn.Module):
+        def __init__(self):
+            super(EEGNet, self).__init__()
+
+            self.F1 = 4
+            self.F2 = 4
+            self.D = 2
+            
+            # Conv2d(in,out,kernel,stride,padding,bias)
+            self.conv1 = nn.Sequential(
+                nn.Conv2d(1, self.F1, (1, 64), padding='same', bias=False),
+                nn.BatchNorm2d(self.F1)
+            )
+            
+            self.conv2 = nn.Sequential(
+                nn.Conv2d(self.F1, self.D*self.F1, (8, 1), groups=self.F1, bias=False),
+                nn.BatchNorm2d(self.D*self.F1),
+                nn.ELU(),
+                nn.AvgPool2d((1, 8)),
+                nn.Dropout(0.25)
+            )
+            
+            self.Conv3 = nn.Sequential(
+                nn.Conv2d(self.D*self.F1, self.D*self.F1, (1, 16), padding='same', groups=self.D*self.F1, bias=False),
+                nn.Conv2d(self.D*self.F1, self.F2, (1, 1), bias=False),
+                nn.BatchNorm2d(self.F2),
+                nn.ELU(),
+                nn.AvgPool2d((1, 8)),
+                nn.Dropout(0.25)
+            )
+            
+            self.classifier = nn.Linear(228, 1, bias=True)
+            
+        def forward(self, x):
+            
+            x = self.conv1(x)
+            x = self.conv2(x)
+            x = self.Conv3(x)
+            
+            x = torch.flatten(x)
+            x = self.classifier(x)
+            x = nn.functional.sigmoid(x)
+            return x
+# Dataset class for processing and 
+class DTUEEG(Dataset):
+    def __init__(self, path):
+        self.dir_path = path
+        files = glob.glob(self.dir_path + '\*.PKL')
+        self.raw_data = []
+        for nrfile in files:
+            with open(nrfile, 'rb') as f:
+                    self.raw_data.append(pickle.load(f))
+        self.data = []
+        self.labels = []
+        for x in range(len(self.raw_data)):
+            self.data.append(self.raw_data[x][0])
+            self.labels.append(self.raw_data[x][1])
+        self.normalized_data = []
+        for row in self.data:
+            xmin = np.min(row)
+            xmax = np.max(row)
+            normalized_row = np.array([2*(x-xmin)/(xmax - xmin) - 1 for x in row])
+            self.normalized_data.append(normalized_row)
+        self.stacked_data = np.hstack(self.normalized_data)
+        self.labels = np.repeat(self.labels, len(self.raw_data[0][0][0])//64)
+
+
+    def __getitem__(self, idx):
+            self.templabel = self.labels[idx]
+            if self.templabel == 1:
+                self.label = 0
+            else:
+                self.label = 1
+            self.batch = self.stacked_data[:, 64*idx:64*idx+64]
+            return self.batch, self.label
+        
+    def __len__(self):
+        return len(self.stacked_data[0])//64
+    
+def main():
+
+    #  Define Device, Model, Error Function and Optimizer
+    device = 'cuda' if torch.cuda.is_available() else 'cpu'
+    model = EEGNet().to(device)
+    loss_fn = nn.BCELoss()
+    optimizer = torch.optim.Adam(model.parameters(), lr= 0.0001)
+
+    # Load Saved Model State
+    # loadpath = r"C:\Users\Jakob\Desktop\AAU\7Semester\Projekt\P7_projekt\ModelDicts\ModelVersion1.tar"
+    # checkpoint = torch.load(loadpath)
+    # model.load_state_dict(checkpoint['model_state_dict'])
+    # optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+    # lr_sched.load_state_dict(checkpoint['lr'])
+    # epoch = checkpoint['epoch']
+    # loss = checkpoint['loss']
+
+
+    trn_loss_values = []
+    trn_acc_values = []
+    val_loss_values = []
+    val_acc_values = []
+    
+    ##  Define Nr of epochs and initialize
+    EPOCHS = 150
+    for i in tqdm.tqdm(range(0, EPOCHS)):
+        trn_correct = 0
+        val_correct = 0
+        trn_acc = 0
+        val_acc = 0
+        trn_running_loss = 0
+        val_running_loss = 0
+        val_epoch_loss = 0
+        trn_epoch_loss = 0
+        ##Begin Training Loop
+        for id in range(18):
+            id_path = id+1
+            path1 = f'C:/Users/Jakob/Desktop/AAU/7Semester/Projekt/P7_projekt/DATA/DTU/dtupkl/train/{id_path}'
+            path2 = f'C:/Users/Jakob/Desktop/AAU/7Semester/Projekt/P7_projekt/DATA/DTU/dtupkl/val/{id_path}'
+            model.train()
+            training_data = DTUEEG(path1)
+            valid_data = DTUEEG(path2)
+            train_dataloader = DataLoader(training_data, batch_size=21*18*30, shuffle=True)
+            valid_dataloader = DataLoader(valid_data, batch_size=6*18*30, shuffle=False)
+            trn_data, trn_labels = next(iter(train_dataloader))
+            for i, x_trn in enumerate(trn_data):
+                x_trn = torch.unsqueeze(x_trn, 0)
+                x_trn = torch.unsqueeze(x_trn, 0)
+                x_trn = x_trn.float().to(device)
+                y_trn = torch.unsqueeze(trn_labels[i], 0)
+                y_trn = y_trn.float().to(device)
+                y_pred = model(x_trn)
+                loss = loss_fn(y_pred, y_trn)
+                optimizer.zero_grad()
+                loss.backward()
+                optimizer.step()
+                trn_running_loss += loss.item()
+                if torch.round(y_pred) == trn_labels[i]:
+                    trn_correct += 1
+            ##  Validation Loop
+            val_data, val_labels = next(iter(valid_dataloader))
+            model.eval()
+            for i, x_val in enumerate(val_data):
+                with torch.no_grad():
+                    x_val = torch.unsqueeze(x_val, 0)
+                    x_val = torch.unsqueeze(x_val, 0)
+                    x_val = x_val.float().to(device)
+                    y_val = torch.unsqueeze(val_labels[i], 0)
+                    y_val = y_val.float().to(device)
+                    y_pred = model(x_val)
+
+                    loss = loss_fn(y_pred, y_val) 
+                    val_running_loss += loss.item()
+                    if torch.round(y_pred) == val_labels[i]:
+                        val_correct += 1
+        val_epoch_loss = val_running_loss/(len(val_data)*18)
+        val_loss_values.append(val_epoch_loss)
+        trn_epoch_loss = trn_running_loss/(len(trn_data)*18)
+        trn_loss_values.append(trn_epoch_loss)
+        trn_acc = trn_correct/(len(trn_data)*18)
+        trn_acc_values.append(trn_acc)
+        val_acc = val_correct/(len(val_data)*18)
+        val_acc_values.append(val_acc)  
+                
+        ## Saving the Model
+        torch.save({
+                    'model_state_dict': model.state_dict(),
+                    'optimizer_state_dict': optimizer.state_dict(),
+                    'loss': loss,
+                }, r"C:\Users\Jakob\Desktop\AAU\7Semester\Projekt\P7_projekt\ModelDicts\P_4_4_2_Zenodo_K_64_8_16_slightmorebatchsizeELU.tar")
+        
+        ## Plots for Accuracy and Loss
+    fig, (ax1, ax2) = plt.subplots(1, 2)
+
+    ax1.title.set_text("Acc")
+    ax1.set_xlabel("Epochs")
+    l1 = ax1.plot(trn_acc_values, color="red", label='trn_acc')
+    l2 = ax1.plot(val_acc_values, color="blue", label='val_acc')
+    
+    ax2.title.set_text("Loss")
+    ax2.set_xlabel("Epochs")
+    l3 = ax2.plot(trn_loss_values, color="red", label='trn_loss')
+    l4 = ax2.plot(val_loss_values, color="blue", label='val_loss')
+
+    ax1.legend(loc="upper right")
+    ax2.legend(loc="upper right")   
+    plt.show()
+
+
+    ## Saving Graph Values to CSV for potential later use
+    trn_acc_csv = pd.DataFrame(trn_acc_values)
+    trn_loss_csv = pd.DataFrame(trn_loss_values)
+    val_acc_csv = pd.DataFrame(val_acc_values)
+    val_loss_csv = pd.DataFrame(val_loss_values)
+
+    csvpath = r'C:\Users\Jakob\Desktop\AAU\7Semester\Projekt\P7_projekt\ModelDicts\csv-files'
+
+    trn_acc_csv.to_csv(csvpath+'\\trn_acc_csv.csv') 
+    trn_loss_csv.to_csv(csvpath+'\\trn_loss_csv.csv') 
+    val_acc_csv.to_csv(csvpath+'\\val_acc_csv.csv')
+    val_loss_csv.to_csv(csvpath+'\\val_loss_csv.csv') 
+
+
+
+
+
+
+if __name__ == '__main__':
+    main()
